@@ -3,27 +3,53 @@ from spade.agent import Agent
 from spade.behaviour import OneShotBehaviour, CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
-import rasa.core.agent as rasaAgent
+#import rasa.core.agent as rasaAgent
+
+#rasa_agent = rasaAgent.create_agent('/home/daniel/rasa/test/models/20211104-131703.tar.gz')
+
+class FarmerAgent(Agent):
+
+    class UserHandler(CyclicBehaviour):
+                
+
+        async def rasabot(message):
+        
+            reply ="sorry no reply"
+            reply_type ="text"
+        
+            rasa_responses = await rasa_agent.handle_text(message, sender_id=sender)
+            if rasa_responses:
+                
+            # rasa_responses : [{'recipient_id': 'default', 'text': 'All done!'}, {'recipient_id': 'default', 'custom': {'product': 'carrot', 'quantity': '20', 'price': '35', 'self_made_product': 'True'}}]
+                print(rasa_responses)
+                for response in rasa_responses:
+                    for msg_type, msg_content in response.items():
+                        if msg_type == "text":
+                            #sender = str(msg_recv.sender)
+                            msg_sent =Message(to=sender)
+                            msg_sent.body= msg_content
+                            await self.send(msg_sent)
+                        if msg_type =="custom":
+                            print (msg_content)
+                            
+                            reply_type = msg_type
+                            reply = msg_content
+
+            else: await self.send("sorry no reply")
+
+            return reply_type, reply 
+
+      
+        async def userhandle(user_inform):
+
+            if user_inform["inform"]=="supply":
+                self.set("sell_data", user_inform["user_data"])
+                print( user_inform)
+                self.add_behaviour(self.Propose())
 
 
-
-async def rasabot(message):
-        responses = await r_agent.handle_text(message)
-        reply ="sorry no reply"
-        msg_type ="text"
-        for response in responses:
-            for response_type, value in response.items():
-                msg_type = response_type
-                reply=value
-        return  msg_type, reply
-
-
-rasa_agent = rasaAgent.create_agent('/home/daniel/rasa/test/models/20211104-131703.tar.gz')
-
-
-class SellerAgent(Agent):
-
-    class Handler(CyclicBehaviour):
+        
+        
         async def run(self):
             
             msg_recv = await self.receive(1000000) # wait for a message for 10 seconds
@@ -38,32 +64,29 @@ class SellerAgent(Agent):
                 message = msg_recv.body
                 sender = str(msg_recv.sender)
                 print("senderid", sender)
-                rasa_responses = await rasa_agent.handle_text(message, sender_id=sender)
-                if rasa_responses:
-                    
-                    # rasa_responses : [{'recipient_id': 'default', 'text': 'All done!'}, {'recipient_id': 'default', 'custom': {'product': 'carrot', 'quantity': '20', 'price': '35', 'self_made_product': 'True'}}]
-                    print(rasa_responses)
-                    for response in rasa_responses:
-                        for msg_type, msg_content in response.items():
-                            if msg_type == "text":
-                                #sender = str(msg_recv.sender)
-                                msg_sent =Message(to=sender)
-                                msg_sent.body= msg_content
-                                await self.send(msg_sent)
-                            if msg_type =="custom":
-                                print (msg_content)
-                                self.set("sell_data",msg_content)
-                                await self.agent.run_selling_handler()
+
+                reply_type, reply = await rasabot(message)
+                """
+                receive customer data from rasa
+                """
+                if reply_type =="custom":
+                    await userhandle(reply)
+                    print(reply)
+
+
+            elif msg_recv.get_metadata('performative')=="user_inform":
+                user_inform = msg_recv.get_metadata('inform_data')
+                await userhandle(user_inform)
+                print(user_inform)
+               
 
 
 
-
-    class Selling_handler(CyclicBehaviour):
+    class BotHandler(CyclicBehaviour):
         async def run(self):
             
             msg_recv = await self.receive(1000000) # wait for a message for 10 seconds
             
-
             print()
             print("Receive message", msg_recv)
             print()
@@ -88,15 +111,17 @@ class SellerAgent(Agent):
         async def run(self ):
             #print("Propose running")
             to_agent = self.get("to_agent")
-            msg = Message(to=to_agent)    # Instantiate the message
-            metadata= self.get("sell_data")
-            for key, value in metadata.items():
-                msg.set_metadata(key, value)
-            msg.set_metadata("performative", "propose")  # Set the "inform" FIPA performative
-            #msg.body = "Hello World"                    # Set the message content
+            for agent in to_agent:
 
-            await self.send(msg)
-            print("Propose sent to", to_agent )
+                msg = Message(to=agent)    # Instantiate the message
+                metadata= self.get("sell_data")
+                for key, value in metadata.items():
+                    msg.set_metadata(key, value)
+                msg.set_metadata("performative", "propose")  # Set the "inform" FIPA performative
+                #msg.body = "Hello World"                    # Set the message content
+
+                await self.send(msg)
+                print("Propose sent to", to_agent )
 
             # stop agent from behaviour
             #await self.agent.stop()
@@ -133,24 +158,29 @@ class SellerAgent(Agent):
             self.add_behaviour(self.Selling_handler())
 
     async def setup(self):
-        template = Template()
-        #template.set_metadata("performative", "inform")
-        self.add_behaviour(self.Handler(), template)
+        usertemplate = Template()
+        bottemplate = Template()
+       
+        #template.set_metadata("performaivet", "inform")
+        self.add_behaviour(self.UserHandler(), usertemplate)
+        self.add_behaviour(self.BotHandler(), bottemplate)
+        
+        
 
 
 if __name__ == "__main__":
-    Seller = SellerAgent("seller1@talk.tcoop.org", "tcoop#2021")
-    Seller.set("to_agent", "buyer@talk.tcoop.org/fjfe")
+    Farmer = FarmerAgent("farmer1@talk.tcoop.org", "tcoop#2021")
+    Farmer.set("to_agent", "buyer@talk.tcoop.org/fjfe")
     #Seller.set("sell_data",{"product":"carrot", "price":"34", "quantity":"50"})
-    Seller.set("confirm_data",{"product":"carrot", "price":"34", "quantity":"20"})
-    future = Seller.start()
+    Farmer.set("confirm_data",{"product":"carrot", "price":"34", "quantity":"20"})
+    future = Farmer.start()
     future.result() # wait for receiver agent to be prepared.
-    print("Seller 1 running")
+    print("Farmer 1 running")
 
-    while Seller.is_alive():
+    while Farmer.is_alive():
         try:
             time.sleep(1)
         except KeyboardInterrupt:
-            Seller.stop()
+            Farmer.stop()
             break
     print("Agents finished")
